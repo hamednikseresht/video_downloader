@@ -9,13 +9,19 @@ def inject_custom_css() -> None:
 
         :root {
             --background: #ffffff;
-            --foreground: #09090b;
+            --foreground: #0f172a;
             --card: #ffffff;
-            --muted: #f4f4f5;
-            --muted-foreground: #71717a;
-            --border: #e4e4e7;
-            --primary: #18181b;
-            --primary-foreground: #fafafa;
+            --muted: #f1f5f4;
+            --muted-foreground: #475569;
+            --border: #d5dedc;
+            --primary: #0f766e;
+            --primary-hover: #115e59;
+            --primary-foreground: #ffffff;
+            --accent: #c2410c;
+            --ring: #0f766e;
+            --ok: #047857;
+            --warn: #b45309;
+            --bad: #b91c1c;
             --radius: 8px;
         }
 
@@ -122,31 +128,64 @@ def inject_custom_css() -> None:
             line-height: 1.5;
         }
         .sidebar-status { font-size: 0.85rem; line-height: 1.7; color: var(--foreground); }
-        .status-ok { color: #047857; }
-        .status-warn { color: #b45309; }
-        .status-bad { color: #b91c1c; }
+        .status-ok { color: var(--ok); }
+        .status-warn { color: var(--warn); }
+        .status-bad { color: var(--bad); }
 
         div[data-testid="stTabs"] button[data-baseweb="tab"] {
             font-weight: 500;
             border-radius: var(--radius) var(--radius) 0 0;
+            cursor: pointer;
+            min-height: 44px;
+        }
+        div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+            color: var(--primary);
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background: var(--primary); }
+        div[data-testid="stTabs"] button[data-baseweb="tab"]:focus-visible {
+            outline: 2px solid var(--ring);
+            outline-offset: -2px;
         }
         .stButton > button {
             border-radius: var(--radius);
             min-height: 40px;
             font-weight: 500;
             border: 1px solid var(--border);
+            cursor: pointer;
             transition: background-color 160ms ease, border-color 160ms ease;
         }
+        .stButton > button:hover { border-color: var(--primary); color: var(--primary); }
+        .stButton > button:disabled { cursor: not-allowed; opacity: 0.55; }
         .stButton > button[kind="primary"],
         .stButton > button[data-testid="stBaseButton-primary"] {
             background: var(--primary);
             color: var(--primary-foreground);
             border-color: var(--primary);
         }
-        .stButton > button:focus-visible {
-            outline: 2px solid #18181b;
+        .stButton > button[kind="primary"]:hover,
+        .stButton > button[data-testid="stBaseButton-primary"]:hover {
+            background: var(--primary-hover);
+            border-color: var(--primary-hover);
+            color: var(--primary-foreground);
+        }
+        .stButton > button:focus-visible,
+        a:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible,
+        [role="checkbox"]:focus-visible,
+        [role="radio"]:focus-visible {
+            outline: 2px solid var(--ring);
             outline-offset: 2px;
         }
+        div[data-baseweb="input"]:focus-within > div,
+        div[data-baseweb="textarea"]:focus-within > div,
+        div[data-baseweb="select"]:focus-within > div {
+            border-color: var(--ring) !important;
+            box-shadow: 0 0 0 1px var(--ring);
+        }
+        [data-testid="stProgress"] [role="progressbar"] > div > div,
+        [data-testid="stProgress"] > div > div > div > div { background-color: var(--primary); }
+        ::selection { background: #99f6e4; color: var(--foreground); }
         div[data-baseweb="input"] > div,
         div[data-baseweb="textarea"] > div,
         div[data-baseweb="select"] > div {
@@ -179,7 +218,12 @@ def inject_custom_css() -> None:
             border-radius: var(--radius);
             padding: 10px 12px;
         }
-        .plan-stat b { display: block; font-size: 1.25rem; letter-spacing: -0.03em; }
+        .plan-stat b {
+            display: block;
+            font-size: 1.25rem;
+            letter-spacing: -0.03em;
+            font-variant-numeric: tabular-nums;
+        }
         .plan-stat span { color: var(--muted-foreground); font-size: 0.8rem; }
         .plan-issues { list-style: none; margin: 8px 0 0; padding: 0; }
         .plan-issues li {
@@ -192,7 +236,7 @@ def inject_custom_css() -> None:
         .plan-issues strong { display: block; white-space: normal; word-spacing: normal; }
         .plan-issues span {
             display: block;
-            color: #b91c1c;
+            color: var(--bad);
             font-size: 0.875rem;
             white-space: normal;
             word-spacing: normal;
@@ -203,10 +247,12 @@ def inject_custom_css() -> None:
         }
         @media (prefers-reduced-motion: reduce) {
             .stButton > button { transition: none; }
+            * { scroll-behavior: auto !important; animation-duration: 0.01ms !important; }
         }
         @media (max-width: 768px) {
             .block-container { padding-left: 1rem; padding-right: 1rem; }
             .app-hero h1 { font-size: 1.4rem !important; }
+            .stButton > button { min-height: 44px; }
         }
         </style>
         """,
