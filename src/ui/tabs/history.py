@@ -17,6 +17,9 @@ from src.ui.components import section_label
 from src.ui.download_ui import offer_browser_download
 
 
+_PAGE_SIZE = 25
+
+
 def _format_timestamp(ts: str) -> str:
     try:
         dt = datetime.fromisoformat(ts)
@@ -81,7 +84,18 @@ def render_history_tab(download_dir: str, settings: dict) -> None:
             key="history_txt",
         )
 
-    for entry in entries:
+    total_pages = max(1, -(-len(entries) // _PAGE_SIZE))
+    if st.session_state.get("history_page", 1) > total_pages:
+        st.session_state["history_page"] = total_pages
+    if total_pages > 1:
+        page = st.number_input(
+            "Page", min_value=1, max_value=total_pages, value=1, step=1, key="history_page"
+        )
+        st.caption(f"Page {int(page)} of {total_pages}")
+    else:
+        page = 1
+    start = (int(page) - 1) * _PAGE_SIZE
+    for entry in entries[start : start + _PAGE_SIZE]:
         stored = entry.get("filepath", "")
         filepath = resolve_history_filepath(stored, download_dir) if stored else ""
         exists = bool(filepath and os.path.isfile(filepath))

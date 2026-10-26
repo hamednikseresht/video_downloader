@@ -1,6 +1,7 @@
 import html
 import os
 import time
+from datetime import datetime
 
 import streamlit as st
 
@@ -16,7 +17,7 @@ from src.queue_store import clear_queue, load_queue, restore_queue, save_queue
 from src.ui.components import section_label
 from src.ui.download_ui import cancel_active_download, offer_browser_download
 from src.ui.execute import execute_download, finish_background_download
-from src.ui.queue_controls import pause_message, render_extra_download_options
+from src.ui.queue_controls import pause_message, render_extra_download_options, render_queue_pause
 from src.ui.url_file import render_url_file_uploader, take_uploaded_urls
 from src.utils.cookies import auth_for_batch, get_auth_cache_key
 
@@ -117,11 +118,48 @@ def render_batch_queue_tab(download_dir: str, settings: dict) -> None:
                 cancel_active_download()
                 _clear_batch()
                 st.rerun()
-        _process_batch_job(download_dir, settings)
+        if job.get("stale"):
+            st.warning(
+                "This saved batch is old, so it was not resumed automatically. "
+                "Resume it, restart it from the first link, or start a new one."
+            )
+            if st.button("Resume saved batch", key="batch_resume_stale", width="stretch"):
+                job["stale"] = False
+                job["stale_acknowledged"] = True
+                _store_batch(job)
+                st.rerun()
+            _render_plan_list(job.get("items") or [])
+        elif job.get("paused"):
+            _render_batch_pause(job)
+        else:
+            _process_batch_job(download_dir, settings)
     elif st.button("Prepare and download", type="primary", width="stretch", key="batch_start"):
         _start_batch_job(plan["videos"], batch_type, int(prefer_height), extras, download_dir, settings)
 
     st.caption(f"Files save to `{download_dir}`")
+
+
+def _render_batch_pause(job: dict) -> None:
+    action = render_queue_pause(job, "batch")
+    if action == "resume":
+        job["paused"] = False
+        _store_batch(job)
+        st.rerun()
+    elif action == "skip":
+        for item in job.get("items") or []:
+            if item.get("status") == "ready":
+                item["status"] = "error"
+                item["error"] = "Skipped"
+                break
+        job["paused"] = False
+        _store_batch(job)
+        st.rerun()
+    elif action == "stop":
+        cancel_active_download()
+        _clear_batch()
+        st.warning("Batch stopped.")
+        st.rerun()
+    _render_plan_list(job.get("items") or [])
 
 
 def _restore_batch_job() -> None:
@@ -130,6 +168,9 @@ def _restore_batch_job() -> None:
     if not job:
         return
     changed = False
+    if _is_stale_job(job) and not job.get("stale_acknowledged"):
+        job["stale"] = True
+        job["message"] = ""
     for item in job.get("items") or []:
         if item.get("status") == "downloading":
             item["status"] = "ready"
@@ -141,6 +182,21 @@ def _restore_batch_job() -> None:
             "Downloads that were in progress will continue."
         )
         _store_batch(job)
+
+
+_STALE_AFTER_HOURS = 12
+
+
+def _is_stale_job(job: dict) -> bool:
+    """A saved batch from a past session must not start downloading on its own."""
+    try:
+        started = datetime.strptime(str(job.get("started_at") or ""), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return True
+    if (datetime.now() - started).total_seconds() > _STALE_AFTER_HOURS * 3600:
+        return True
+    cookiefile = job.get("auth_cookiefile") or ""
+    return bool(cookiefile) and not os.path.isfile(cookiefile)
 
 
 def _restart_batch(job: dict) -> None:
@@ -461,6 +517,9 @@ def _apply_download_result(job: dict, item_index: int | None, result: dict) -> N
         guide = classify_download_error(item["error"], result.get("download_kind") or "video")
         if pauses_queue(guide):
             job["message"] = pause_message(guide)
+            job["paused"] = True
+            job["pause_message"] = pause_message(guide)
+            job["pause_url"] = item.get("url") or ""
         else:
             job["message"] = f"{item['title']} failed. The other downloads continue. {item['error']}"
 

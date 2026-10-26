@@ -1,7 +1,9 @@
 import csv
+import hashlib
 import io
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -77,15 +79,38 @@ def _atomic_write_json(path: str, data) -> None:
         raise
 
 
+def _backup_corrupt_history() -> None:
+    """Keep an unreadable history file so the next write cannot silently wipe it."""
+    bak = HISTORY_FILE + ".corrupt.bak"
+    try:
+        if os.path.isfile(HISTORY_FILE) and not os.path.isfile(bak):
+            shutil.copy2(HISTORY_FILE, bak)
+    except OSError:
+        pass
+
+
+def _entry_id(entry: dict) -> str:
+    blob = f"{entry.get('url', '')}|{entry.get('timestamp', '')}|{entry.get('title', '')}"
+    return hashlib.sha1(blob.encode("utf-8", errors="ignore")).hexdigest()[:12]
+
+
 def load_history() -> list[dict]:
     if not os.path.isfile(HISTORY_FILE):
         return []
     try:
         with open(HISTORY_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError, TypeError):
+        _backup_corrupt_history()
         return []
+    if not isinstance(data, list):
+        _backup_corrupt_history()
+        return []
+    entries = [e for e in data if isinstance(e, dict)]
+    for entry in entries:
+        if not entry.get("id"):
+            entry["id"] = _entry_id(entry)
+    return entries
 
 
 def save_history(entries: list[dict]) -> None:
@@ -112,6 +137,22 @@ def filepath_for_storage(filepath: str, download_dir: str = "") -> str:
     return abs_path
 
 
+def _find_in_subfolders(download_dir: str, relative: str, max_depth: int = 3) -> list[str]:
+    """Batch jobs save under <download_dir>/<batch>/<platform>/; find old rows stored without that prefix."""
+    name = os.path.basename(relative)
+    root = os.path.abspath(download_dir)
+    found: list[str] = []
+    if not name or not os.path.isdir(root):
+        return found
+    base_depth = root.rstrip(os.sep).count(os.sep)
+    for current, dirs, files in os.walk(root):
+        if current.count(os.sep) - base_depth >= max_depth:
+            dirs[:] = []
+        if name in files:
+            found.append(os.path.join(current, name))
+    return found
+
+
 def resolve_history_filepath(filepath: str, download_dir: str = "") -> str:
     """Resolve a history path; only return files under download_dir when set."""
     if not filepath:
@@ -124,6 +165,8 @@ def resolve_history_filepath(filepath: str, download_dir: str = "") -> str:
         candidates.append(filepath)
     candidates.append(os.path.join(PROJECT_ROOT, filepath))
     candidates.append(filepath)
+    if download_dir and not os.path.isabs(filepath):
+        candidates.extend(_find_in_subfolders(download_dir, filepath))
 
     for path in candidates:
         try:

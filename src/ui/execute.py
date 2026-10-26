@@ -273,7 +273,7 @@ def execute_download(
             result["filename"],
             download_kind,
             platform,
-            download_dir=download_dir,
+            download_dir=library,
         )
 
     return result
