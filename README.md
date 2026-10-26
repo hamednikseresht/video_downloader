@@ -73,6 +73,7 @@ Copy `.env.example` to `.env` and set what you need:
 | `YTDL_FFMPEG_PATH` | ffmpeg binary or folder |
 | `YTDL_DOWNLOAD_DIR` | Download folder |
 | `YTDL_BATCH_PAUSE_SEC` | Pause between batch items |
+| `YTDL_FRAGMENTS` | Parallel fragment downloads (1-16, default 4) |
 
 Real environment variables win over `.env`; both win over `settings.json` and are never saved back to it.
 

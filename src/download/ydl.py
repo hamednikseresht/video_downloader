@@ -2,7 +2,12 @@ import os
 import re
 import time
 
-from src.constants import _WINDOWS_DENO_PATHS, _WINDOWS_NODE_PATHS
+from src.constants import (
+    FRAGMENT_CONCURRENCY,
+    SOCKET_TIMEOUT_SEC,
+    _WINDOWS_DENO_PATHS,
+    _WINDOWS_NODE_PATHS,
+)
 from src.platforms.instagram import instagram_format_selector
 from src.platforms.youtube import video_format_selector
 from src.settings import resolve_ffmpeg_location
@@ -76,7 +81,8 @@ def get_base_ydl_opts(
         "fragment_retries": 8,
         "file_access_retries": 8,
         "sleep_interval_requests": 0.75,
-        "concurrent_fragment_downloads": 1,
+        "concurrent_fragment_downloads": FRAGMENT_CONCURRENCY,
+        "socket_timeout": SOCKET_TIMEOUT_SEC,
         "windowsfilenames": True,
         "restrictfilenames": True,
         "retry_sleep_functions": {
@@ -135,10 +141,9 @@ def get_curl_impersonate() -> str:
 
 def get_subtitle_rate_limit_opts() -> dict:
     opts = {
-        "sleep_interval_subtitles": 5,
+        "sleep_interval_subtitles": 2,
         "sleep_interval_requests": 1.5,
-        "sleep_interval": 3,
-        "max_sleep_interval": 10,
+        "socket_timeout": SOCKET_TIMEOUT_SEC,
         "retries": 10,
         "fragment_retries": 10,
         "file_access_retries": 10,

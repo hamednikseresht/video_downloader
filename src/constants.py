@@ -17,10 +17,26 @@ MAX_BROWSER_DOWNLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
 FETCH_CACHE_VERSION = 14
 
 # Pause before subtitle fetch so back-to-back metadata + subtitle requests are less likely to 429.
-SUBTITLE_PREFETCH_PAUSE_SEC = 6
+SUBTITLE_PREFETCH_PAUSE_SEC = 2
 
 # Pause between playlist/batch items to reduce YouTube rate limits.
 BATCH_ITEM_PAUSE_SEC = 1.5
+
+# Network timeout (seconds) so a stalled connection fails and retries instead of hanging.
+SOCKET_TIMEOUT_SEC = 30
+
+# Parallel fragment downloads for DASH/HLS (override with YTDL_FRAGMENTS, 1-16).
+# The Errno 22 fallback in worker.py still drops to 1.
+def _fragment_concurrency() -> int:
+    from src.env import env_str
+
+    try:
+        return min(16, max(1, int(env_str("YTDL_FRAGMENTS") or 4)))
+    except ValueError:
+        return 4
+
+
+FRAGMENT_CONCURRENCY = _fragment_concurrency()
 
 # App version shown in UI / health.
 APP_VERSION = "3.0"
