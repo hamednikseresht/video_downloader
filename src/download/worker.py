@@ -5,6 +5,7 @@ import time
 import yt_dlp
 
 from src.constants import DOWNLOAD_TRANSIENT_RETRIES, SUBTITLE_PREFETCH_PAUSE_SEC
+from src.download.problems import classify_problem, is_hopeless
 from src.download.paths import (
     clear_resume_files,
     resolve_downloaded_filepath,
@@ -237,6 +238,9 @@ def do_download(
             log.warning("Attempt %s/%s failed for %s: %s", attempt + 1, max_attempts, url, last_error)
             clear_resume_files(download_dir, output_basename)
             if attempt >= max_attempts - 1:
+                break
+            if is_hopeless(last_error):
+                log.info("Not retrying %s: %s", url, classify_problem(last_error).title)
                 break
             if _is_windows_path_error(last_error) and download_kind in ("video", "audio"):
                 opts = _apply_format_fallback(opts, attempt)

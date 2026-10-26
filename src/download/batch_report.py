@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 
 from src.constants import PROJECT_ROOT, REPORTS_DIR
+from src.download.problems import group_problems, problems_text
 
 
 def new_batch_id(kind: str = "batch") -> str:
@@ -34,6 +35,12 @@ def write_batch_report(
     with open(path_tmp, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(_render(results, info))
     os.replace(path_tmp, path)
+    # Plain-text problem list next to the HTML report.
+    txt_path = os.path.splitext(path)[0] + "-problems.txt"
+    with open(txt_path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(
+            problems_text(results, str(info.get("title") or "Batch download"), info["finished_at"])
+        )
     return path
 
 
@@ -50,6 +57,7 @@ def _render(results: list[dict], meta: dict) -> str:
     rows = "\n".join(_row(index, item) for index, item in enumerate(results, start=1))
     if not rows:
         rows = '<tr><td colspan="5" class="empty">No items in this run.</td></tr>'
+    problems = _problems_html(results)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -97,6 +105,12 @@ def _render(results: list[dict], meta: dict) -> str:
   .error-text {{ margin: 8px 0 0; white-space: pre-wrap; color: var(--bad); font-size: 0.85rem; }}
   .path {{ color: var(--muted); font-size: 0.8rem; word-break: break-all; }}
   .empty {{ color: var(--muted); }}
+  .problems {{ margin: 0 0 24px; }}
+  .problems h2 {{ font-size: 1.1rem; margin: 0 0 10px; }}
+  .problem {{ background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--bad); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }}
+  .problem h3 {{ margin: 0; font-size: 0.95rem; }}
+  .problem p {{ margin: 4px 0 8px; color: var(--muted); font-size: 0.85rem; }}
+  .problem ul {{ margin: 0; padding-left: 18px; font-size: 0.85rem; }}
   @media (max-width: 720px) {{
     .cards {{ grid-template-columns: 1fr 1fr; }}
     table, thead, tbody, th, td, tr {{ display: block; }}
@@ -116,6 +130,7 @@ def _render(results: list[dict], meta: dict) -> str:
     <div class="card"><b>{counts["skipped"]}</b><span>Skipped</span></div>
     <div class="card"><b>{counts["failed"]}</b><span>Failed</span></div>
   </section>
+{problems}
   <table>
     <thead><tr><th>#</th><th>Title</th><th>Status</th><th>File</th><th>Link</th></tr></thead>
     <tbody>
@@ -126,6 +141,27 @@ def _render(results: list[dict], meta: dict) -> str:
 </body>
 </html>
 """
+
+
+def _problems_html(results: list[dict]) -> str:
+    groups = group_problems(results)
+    if not groups:
+        return ""
+    blocks = []
+    for group in groups:
+        problem = group["problem"]
+        links = "".join(
+            f'<li>{html.escape(str(item.get("platform") or "").title())} · '
+            f'<a href="{html.escape(str(item.get("url") or ""), quote=True)}">'
+            f'{html.escape(str(item.get("title") or item.get("url") or ""))}</a></li>'
+            for item in group["items"]
+        )
+        blocks.append(
+            '<div class="problem">'
+            f"<h3>{html.escape(problem.title)} ({len(group['items'])})</h3>"
+            f"<p>{html.escape(problem.advice)}</p><ul>{links}</ul></div>"
+        )
+    return '  <section class="problems"><h2>Problems</h2>' + "".join(blocks) + "</section>"
 
 
 def _row(index: int, item: dict) -> str:

@@ -4,10 +4,14 @@ import time
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.constants import BATCH_ITEM_PAUSE_SEC, BATCH_QUEUE_FILE, BATCH_REPORT_FILE
 from src.download.batch_plan import classify_batch_urls, split_by_platform
+from src.download.archive import build_zip_parts
 from src.download.batch_report import new_batch_id, write_batch_report
+from src.download.formats import format_size
+from src.download.problems import group_problems
 from src.download.errors import classify_download_error, pauses_queue
 from src.download.fetch import fetch_formats, fetch_video_info
 from src.download.pacing import PLATFORM_ORDER, check_delay, next_delay
@@ -150,6 +154,9 @@ def render_batch_queue_tab(download_dir: str, settings: dict) -> None:
     elif st.button("Prepare and download", type="primary", width="stretch", key="batch_start"):
         _start_batch_job(plan["videos"], batch_type, int(prefer_height), extras, download_dir, settings)
 
+    elif st.session_state.get("batch_finish"):
+        _render_finish_panel(st.session_state["batch_finish"], download_dir)
+
     st.caption(f"Files save to `{download_dir}`")
 
 
@@ -287,6 +294,7 @@ def _start_batch_job(
                     "filepath": "",
                 }
             )
+    st.session_state.pop("batch_finish", None)
     batch_id = new_batch_id("batch")
     output_dir = os.path.join(download_dir, batch_id)
     os.makedirs(os.path.join(output_dir, "youtube"), exist_ok=True)
@@ -466,7 +474,7 @@ def _run_platform_jobs(job: dict, download_dir: str, settings: dict) -> None:
         item["status"] = "downloading"
         platform_dir = os.path.join(job["output_dir"], platform)
         os.makedirs(platform_dir, exist_ok=True)
-        position = sum(1 for entry in job["items"] if entry["platform"] == platform and entry["status"] != "pending")
+        position = sum(1 for entry in job["items"][: item_index + 1] if entry["platform"] == platform)
         launched = execute_download(
             url=item["url"],
             platform=platform,
@@ -654,22 +662,96 @@ def _finish_batch(job: dict, download_dir: str) -> None:
     _ensure_batch_folder(job, download_dir)
     results = job.get("results") or []
     batch_id = job["batch_id"]
+    detail = _statistics_line(results, job)
     report_path = write_batch_report(
         results,
-        {
-            "kind": "batch",
-            "title": f"Batch {batch_id}",
-            "detail": _statistics_line(results, job),
-        },
+        {"kind": "batch", "title": f"Batch {batch_id}", "detail": detail},
         dest_dir=job["output_dir"],
         report_name=batch_id,
     )
     save_queue(BATCH_REPORT_FILE, {"results": results, "html": report_path})
     st.session_state["last_batch_report"] = report_path
-    _render_batch_summary(results, download_dir)
-    st.success(f"Step 7 · Report saved: `{report_path}`")
-    st.info(_statistics_line(results, job))
+    saved_files = [
+        item.get("filepath") for item in results if item.get("status") == "ok" and item.get("filepath")
+    ]
+    try:
+        zips = build_zip_parts(saved_files, job["output_dir"], batch_id)
+    except OSError:
+        zips = []
+    st.session_state["batch_finish"] = {
+        "batch_id": batch_id,
+        "results": results,
+        "report": report_path,
+        "problems_txt": os.path.splitext(report_path)[0] + "-problems.txt",
+        "detail": detail,
+        "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "zips": zips,
+        "auto_done": False,
+    }
     _clear_batch()
+    st.rerun()
+
+
+def _render_finish_panel(finish: dict, download_dir: str) -> None:
+    results = finish["results"]
+    st.markdown("---")
+    st.success(f"Batch {finish['batch_id']} finished at {finish['finished_at']}")
+    st.info(finish["detail"])
+    st.caption(f"HTML report: `{finish['report']}`")
+    st.caption(f"Problem list: `{finish['problems_txt']}`")
+
+    groups = group_problems(results)
+    if groups:
+        st.markdown(f"**Problems ({sum(len(g['items']) for g in groups)})**")
+        for group in groups:
+            problem = group["problem"]
+            with st.expander(f"{problem.title} · {len(group['items'])}", expanded=False):
+                st.caption(problem.advice)
+                for item in group["items"]:
+                    st.caption(f"{(item.get('platform') or '').title()} · {item.get('title') or ''}")
+                    st.code(item.get("url") or "", language=None)
+    else:
+        st.success("No problems. Every link succeeded.")
+
+    _render_batch_summary(results, download_dir)
+
+    zips = [path for path in finish.get("zips") or [] if os.path.isfile(path)]
+    if not zips:
+        return
+    total = len(zips)
+    st.markdown("**Download everything to your browser**")
+    for number, path in enumerate(zips, start=1):
+        with open(path, "rb") as handle:
+            st.download_button(
+                f"Browser download part {number} of {total} ({format_size(os.path.getsize(path))})",
+                data=handle,
+                file_name=os.path.basename(path),
+                mime="application/zip",
+                key=f"batch_zip_{finish['batch_id']}_{number}",
+                on_click="ignore",
+                width="stretch",
+            )
+    if not finish.get("auto_done"):
+        finish["auto_done"] = True
+        st.caption("Starting the browser download now. Allow multiple downloads if the browser asks.")
+        components.html(_AUTO_DOWNLOAD_JS, height=0)
+
+
+_AUTO_DOWNLOAD_JS = """
+<script>
+(function () {
+  const doc = window.parent.document;
+  let tries = 0;
+  const wait = setInterval(() => {
+    const buttons = [...doc.querySelectorAll('[data-testid="stDownloadButton"] button')]
+      .filter((b) => b.innerText.includes('Browser download part'));
+    if (!buttons.length && ++tries < 40) return;
+    clearInterval(wait);
+    buttons.forEach((button, i) => setTimeout(() => button.click(), 1500 * i));
+  }, 250);
+})();
+</script>
+"""
 
 
 def _statistics_line(results: list[dict], job: dict) -> str:
@@ -706,12 +788,10 @@ def _render_batch_summary(results: list[dict], download_dir: str) -> None:
         st.markdown(f"**{platform.title()}** — {good} succeeded, {len(rows) - good} failed")
         with st.container(border=True):
             for i, item in rows:
-                if item["status"] in ("ok", "skipped") and item.get("filepath"):
+                if item["status"] in ("ok", "skipped"):
                     st.caption(f"✓ {item.get('title', item['url'])}")
-                    offer_browser_download(item["filepath"], download_dir, key=f"batch-result-{i}")
                 elif item["status"] == "error":
-                    st.caption(f"✗ {item.get('title', item['url'])} — {item.get('error', 'failed')}")
-                    st.caption(item.get("url", ""))
+                    st.caption(f"✗ {item.get('title', item['url'])}")
 
 
 def _pause_seconds(settings: dict) -> float:

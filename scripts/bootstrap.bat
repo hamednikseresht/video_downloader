@@ -219,6 +219,7 @@ goto fail_pause
 :setup_deps
 set "YTD_RUNTIME=!RUNTIME_METHOD!"
 echo.
+call :upgrade_packages
 echo [SETUP] Installing / verifying Python packages ...
 echo        ^(This may take a few minutes on first run — please wait.^)
 echo.
@@ -237,6 +238,18 @@ if "!RUNTIME_METHOD!"=="conda" (
 call :offer_ffmpeg_install
 if errorlevel 1 goto fail_pause
 goto start_app
+
+:upgrade_packages
+echo.
+echo [UPDATE] Updating pip and all project packages ^(yt-dlp, streamlit, curl_cffi + dependencies^) ...
+python -m pip install --upgrade pip --quiet
+python -m pip install --upgrade --upgrade-strategy eager -r requirements.txt --quiet
+if errorlevel 1 (
+    echo [WARN] Package update failed ^(offline?^). Continuing with the installed versions.
+) else (
+    echo [OK] Packages are up to date.
+)
+exit /b 0
 
 :deps_failed
 echo.
