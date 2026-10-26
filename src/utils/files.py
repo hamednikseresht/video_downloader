@@ -16,3 +16,30 @@ def open_folder(path: str) -> bool:
         return True
     except OSError:
         return False
+
+
+def read_clipboard_text() -> str:
+    """Read text from the OS clipboard. The app runs locally, so the server clipboard is the user's."""
+    if os.name == "nt":
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard -Raw"],
+                capture_output=True,
+                timeout=8,
+                check=False,
+            )
+            return out.stdout.decode("utf-8", errors="replace")
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+        root.withdraw()
+        try:
+            return root.clipboard_get()
+        finally:
+            root.destroy()
+    except Exception:
+        return ""
+

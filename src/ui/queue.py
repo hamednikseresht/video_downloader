@@ -10,9 +10,11 @@ from src.download.batch_plan import classify_batch_urls, split_by_platform
 from src.download.batch_report import new_batch_id, write_batch_report
 from src.download.errors import classify_download_error, pauses_queue
 from src.download.fetch import fetch_formats, fetch_video_info
+from src.download.pacing import PLATFORM_ORDER, check_delay, next_delay
 from src.download.formats import preferred_audio_format, preferred_video_format, quality_note
 from src.history import is_url_saved
-from src.platforms.detect import detect_platform, merge_url_blocks, normalize_media_url, trim_url_state
+from src.utils.files import read_clipboard_text
+from src.platforms.detect import detect_platform, extract_urls, merge_url_blocks, normalize_media_url, trim_url_state
 from src.queue_store import clear_queue, load_queue, restore_queue, save_queue
 from src.ui.components import section_label
 from src.ui.download_ui import cancel_active_download, offer_browser_download
@@ -37,8 +39,9 @@ def render_batch_queue_tab(download_dir: str, settings: dict) -> None:
     section_label("Batch download")
     st.caption(
         "Paste YouTube or Instagram links, or load a .txt or .csv file. "
-        "The batch first cleans the links, splits YouTube and Instagram, "
-        "checks each video, then downloads. Both platforms run together when both are present."
+        "The batch first cleans the links and keeps only YouTube and Instagram, "
+        "splits them into two groups, checks each video, then downloads Instagram first and "
+        "YouTube second, with a random wait between links to avoid blocks."
     )
 
     _restore_batch_job()
@@ -61,6 +64,17 @@ def render_batch_queue_tab(download_dir: str, settings: dict) -> None:
             st.success(f"Loaded {len(found)} link(s) from `{uploaded.name}`.")
         else:
             st.warning(f"No YouTube or Instagram links found in `{uploaded.name}`.")
+
+    if st.button("Paste links from clipboard", key="batch_paste_clipboard"):
+        clip_urls = extract_urls(read_clipboard_text())
+        if clip_urls:
+            st.session_state["batch_urls"] = merge_url_blocks(
+                st.session_state.get("batch_urls") or "",
+                clip_urls,
+            )
+            st.success(f"Added {len(clip_urls)} YouTube/Instagram link(s) from the clipboard.")
+        else:
+            st.warning("No YouTube or Instagram links found in the clipboard.")
 
     trim_url_state(st.session_state, "batch_urls", multiline=True)
 
@@ -261,7 +275,7 @@ def _start_batch_job(
 
     grouped = split_by_platform([normalize_media_url(url) for url in valid_urls])
     items = []
-    for platform in ("youtube", "instagram"):
+    for platform in PLATFORM_ORDER:
         for url in grouped[platform]:
             items.append(
                 {
@@ -400,7 +414,7 @@ def _check_next_item(job: dict, download_dir: str, settings: dict) -> None:
         job["message"] = f"Checking {index + 1} of {total}. {item['title']} is available."
     job["index"] = index + 1
     _store_batch(job)
-    time.sleep(0.2)
+    time.sleep(check_delay(item["platform"]))
     st.rerun()
 
 
@@ -414,23 +428,40 @@ def _run_platform_jobs(job: dict, download_dir: str, settings: dict) -> None:
         else preferred_audio_format()
     )
     alive = False
-    for platform in ("youtube", "instagram"):
+    cooldowns = job.setdefault("cooldown_until", {})
+    # Groups run one after the other: Instagram first, then YouTube. `break` keeps a group
+    # from overlapping the next one.
+    for platform in PLATFORM_ORDER:
+        label = "YouTube" if platform == "youtube" else "Instagram"
         slot = workers.get(platform)
         if slot and slot.get("thread") is not None and not slot["thread"].is_alive():
             result = finish_background_download(slot, download_dir)
             _apply_download_result(job, slot.get("item_index"), result)
             workers[platform] = None
             slot = None
+            if result.get("status") != "skipped":
+                cooldowns[platform] = time.time() + next_delay(platform, _pause_seconds(settings))
+            if job.get("paused"):
+                _store_batch(job)
+                st.rerun()
+                return
         if slot and slot.get("thread") is not None and slot["thread"].is_alive():
             alive = True
             snap = slot["state"].snapshot()
             pct = min(float(snap.get("percent") or 0), 100.0)
-            label = "YouTube" if platform == "youtube" else "Instagram"
             st.progress(pct / 100.0, text=f"{label} · {pct:.0f}% · {slot.get('title') or ''}")
-            continue
+            break
         nxt = _next_ready(job, platform)
         if nxt is None:
             continue
+        wait = float(cooldowns.get(platform, 0)) - time.time()
+        if wait > 0:
+            job["message"] = (
+                f"Step 5 · {label} group · waiting {wait:.0f}s before the next link "
+                "so the account is not flagged."
+            )
+            alive = True
+            break
         item_index, item = nxt
         item["status"] = "downloading"
         platform_dir = os.path.join(job["output_dir"], platform)
@@ -455,17 +486,19 @@ def _run_platform_jobs(job: dict, download_dir: str, settings: dict) -> None:
         )
         if launched.get("status") != "running":
             _apply_download_result(job, item_index, launched)
-            continue
+            if launched.get("status") != "skipped":
+                cooldowns[platform] = time.time() + next_delay(platform, _pause_seconds(settings))
+            alive = True
+            break
         launched["item_index"] = item_index
         launched["title"] = item["title"]
         workers[platform] = launched
         alive = True
-        label = "YouTube" if platform == "youtube" else "Instagram"
+        group = [entry for entry in job["items"] if entry["platform"] == platform]
+        done = sum(1 for entry in group if entry["status"] not in ("ready", "downloading", "pending"))
+        job["message"] = f"Step 5 · {label} group · downloading {done + 1} of {len(group)}."
         st.caption(f"Step 5 · {label} download started · {item['title']}")
-
-    running = [name.title() for name, slot in workers.items() if slot and slot.get("thread") and slot["thread"].is_alive()]
-    if running:
-        job["message"] = "Step 5 · Downloading " + " and ".join(running) + "."
+        break
     _render_plan_list(job.get("items") or [])
     if alive:
         _store_batch(job)
@@ -643,11 +676,14 @@ def _statistics_line(results: list[dict], job: dict) -> str:
     saved = sum(1 for item in results if item.get("status") == "ok")
     skipped = sum(1 for item in results if item.get("status") == "skipped")
     failed = sum(1 for item in results if item.get("status") == "error")
-    youtube = sum(1 for item in results if item.get("platform") == "youtube")
-    instagram = sum(1 for item in results if item.get("platform") == "instagram")
+    def group(platform: str) -> str:
+        rows = [item for item in results if item.get("platform") == platform]
+        good = sum(1 for item in rows if item.get("status") in ("ok", "skipped"))
+        return f"{platform.title()} {good}/{len(rows)} ok"
+
     return (
         f"Batch {job.get('batch_id', '')} · {len(results)} links · "
-        f"YouTube {youtube} · Instagram {instagram} · "
+        f"{group('instagram')} · {group('youtube')} · "
         f"saved {saved} · already in folder {skipped} · failed {failed}"
     )
 
@@ -662,13 +698,20 @@ def _render_batch_summary(results: list[dict], download_dir: str) -> None:
     st.markdown("---")
     st.markdown(f"**Batch complete** — {ok} succeeded/skipped, {failed} failed")
 
-    with st.container(border=True):
-        for i, item in enumerate(results):
-            if item["status"] in ("ok", "skipped") and item.get("filepath"):
-                st.caption(f"✓ {item.get('title', item['url'])}")
-                offer_browser_download(item["filepath"], download_dir, key=f"batch-result-{i}")
-            elif item["status"] == "error":
-                st.caption(f"✗ {item.get('title', item['url'])} — {item.get('error', 'failed')}")
+    for platform in PLATFORM_ORDER:
+        rows = [(i, item) for i, item in enumerate(results) if item.get("platform") == platform]
+        if not rows:
+            continue
+        good = sum(1 for _, item in rows if item["status"] in ("ok", "skipped"))
+        st.markdown(f"**{platform.title()}** — {good} succeeded, {len(rows) - good} failed")
+        with st.container(border=True):
+            for i, item in rows:
+                if item["status"] in ("ok", "skipped") and item.get("filepath"):
+                    st.caption(f"✓ {item.get('title', item['url'])}")
+                    offer_browser_download(item["filepath"], download_dir, key=f"batch-result-{i}")
+                elif item["status"] == "error":
+                    st.caption(f"✗ {item.get('title', item['url'])} — {item.get('error', 'failed')}")
+                    st.caption(item.get("url", ""))
 
 
 def _pause_seconds(settings: dict) -> float:
