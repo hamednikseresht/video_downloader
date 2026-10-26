@@ -1,0 +1,41 @@
+# Local env / secrets / user state
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# App user data (do not commit)
+cookies.txt
+settings.json
+download_history.json
+batch_queue.json
+playlist_queue.json
+batch_report.json
+playlist_report.json
+.setup_complete
+downloads/
+reports/
+logs/
+*.part
+*.ytdl
+*.lock
+settings.json.corrupt.bak
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Graphify / local tooling
+.graphify_python
+graphify-out/
