@@ -10,6 +10,7 @@ from src.constants import (
     SETTINGS_FILE,
     _WINDOWS_FFMPEG_PATHS,
 )
+from src.env import env_overrides
 from src.download.paths import (
     download_dir_setting_value,
     list_recent_downloads,
@@ -43,7 +44,27 @@ def default_settings() -> dict:
     }
 
 
+def _apply_env(settings: dict) -> dict:
+    """Environment / .env values override settings.json (keeps machine paths out of the repo)."""
+    env = env_overrides()
+    if "download_dir" in env:
+        settings["download_dir"] = resolve_download_dir(env["download_dir"], create=False)
+    if "ffmpeg_path" in env:
+        settings["ffmpeg_path"] = env["ffmpeg_path"] if is_safe_ffmpeg_path(env["ffmpeg_path"]) else ""
+    if "cookies_path" in env:
+        settings["cookies_path"] = sanitize_cookies_path(env["cookies_path"])
+    if "cookies_from_browser" in env:
+        settings["cookies_from_browser"] = sanitize_browser_choice(env["cookies_from_browser"])
+    if "batch_pause_sec" in env:
+        settings["batch_pause_sec"] = min(120.0, max(0.0, env["batch_pause_sec"]))
+    return settings
+
+
 def load_settings() -> dict:
+    return _apply_env(_load_saved_settings())
+
+
+def _load_saved_settings() -> dict:
     settings = default_settings()
     if not os.path.isfile(SETTINGS_FILE):
         return settings
@@ -86,7 +107,12 @@ def _backup_corrupt_settings() -> None:
 
 
 def save_settings(settings: dict) -> None:
-    payload = {k: v for k, v in settings.items() if not str(k).startswith("_")}
+    env_keys = set(env_overrides())
+    payload = {
+        k: v
+        for k, v in settings.items()
+        if not str(k).startswith("_") and k not in env_keys
+    }
     if isinstance(payload.get("download_dir"), str):
         # Create only when the user explicitly saves.
         resolved = resolve_download_dir(payload["download_dir"], create=True)

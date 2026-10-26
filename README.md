@@ -61,6 +61,21 @@ You can also click **Fix everything** anytime in the setup screen or sidebar **H
 | HTTP 429 | Wait 1–2 minutes; avoid rapid clicks; resume later |
 | Download interrupted | Click **Start download** again — resume uses leftover `.part` files |
 
+## Configuration / auth (.env)
+
+Machine paths and auth live in a local `.env` (gitignored), not in `settings.json`.
+Copy `.env.example` to `.env` and set what you need:
+
+| Variable | Purpose |
+|----------|---------|
+| `YTDL_COOKIES_BROWSER` | `firefox` / `edge` / `chrome` / `brave` |
+| `YTDL_COOKIES_PATH` | Netscape `cookies.txt` |
+| `YTDL_FFMPEG_PATH` | ffmpeg binary or folder |
+| `YTDL_DOWNLOAD_DIR` | Download folder |
+| `YTDL_BATCH_PAUSE_SEC` | Pause between batch items |
+
+Real environment variables win over `.env`; both win over `settings.json` and are never saved back to it.
+
 ## Resume downloads
 
 - yt-dlp **continuedl** is enabled  

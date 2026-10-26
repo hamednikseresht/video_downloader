@@ -39,3 +39,8 @@ Thumbs.db
 # Graphify / local tooling
 .graphify_python
 graphify-out/
+
+# Secrets / machine config
+.env
+.env.*
+!.env.example
